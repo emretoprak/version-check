@@ -99,7 +99,7 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     vscode.commands.registerCommand(
       "versionCheck.updateDependency",
-      async (uri: vscode.Uri | string, providerId: string, info: PackageInfo, latest?: string) => {
+      async (uri: vscode.Uri | string, providerId: string, info: PackageInfo, latest?: string, direct?: boolean) => {
         const provider = enabledProviders.find((item) => item.id === providerId);
         if (!provider) {
           return;
@@ -113,7 +113,11 @@ export function activate(context: vscode.ExtensionContext) {
         if (!fresh) {
           return;
         }
-        const chosenVersion = await pickVersion(provider, fresh, latest);
+        // direct=true: apply the latest version immediately without prompting.
+        // Otherwise open the version picker.
+        const chosenVersion = direct && latest
+          ? latest
+          : await pickVersion(provider, fresh, latest);
         if (!chosenVersion) {
           return;
         }

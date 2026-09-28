@@ -111,7 +111,7 @@ function activate(context) {
             providedCodeActionKinds: codeActionProvider_1.VersionCodeActionProvider.providedCodeActionKinds
         }));
     }
-    context.subscriptions.push(vscode.commands.registerCommand("versionCheck.updateDependency", async (uri, providerId, info, latest) => {
+    context.subscriptions.push(vscode.commands.registerCommand("versionCheck.updateDependency", async (uri, providerId, info, latest, direct) => {
         const provider = enabledProviders.find((item) => item.id === providerId);
         if (!provider) {
             return;
@@ -125,7 +125,11 @@ function activate(context) {
         if (!fresh) {
             return;
         }
-        const chosenVersion = await pickVersion(provider, fresh, latest);
+        // direct=true: apply the latest version immediately without prompting.
+        // Otherwise open the version picker.
+        const chosenVersion = direct && latest
+            ? latest
+            : await pickVersion(provider, fresh, latest);
         if (!chosenVersion) {
             return;
         }

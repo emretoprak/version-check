@@ -42,7 +42,8 @@ const LEVEL_COLORS = {
     latest: "#4ade80",
     patch: "#fbbf24",
     minor: "#fb923c",
-    major: "#f87171"
+    major: "#f87171",
+    grey: "#9ca3af"
 };
 /** Human-readable label per update level, shown in the inline annotation. */
 const UPDATE_LEVEL_LABELS = {
@@ -51,13 +52,24 @@ const UPDATE_LEVEL_LABELS = {
     minor: "Minor Update",
     major: "Major Update"
 };
-function buildTextDecoration(range, contentText) {
+function buildTextDecoration(range, contentText, hover) {
     return {
         range,
+        hoverMessage: hover,
         renderOptions: {
             after: { contentText }
         }
     };
+}
+/** Build a clickable command link shown when hovering the inline annotation. */
+function buildUpdateHover(documentUri, providerId, info, latestVersion) {
+    const directArgs = encodeURIComponent(JSON.stringify([documentUri.toString(), providerId, info, latestVersion, true]));
+    const pickArgs = encodeURIComponent(JSON.stringify([documentUri.toString(), providerId, info, latestVersion, false]));
+    const md = new vscode.MarkdownString(`[$(arrow-up) Update ${info.name} to ${latestVersion}](command:versionCheck.updateDependency?${directArgs})  \n` +
+        `[$(list-selection) Choose version…](command:versionCheck.updateDependency?${pickArgs})`);
+    md.isTrusted = true;
+    md.supportThemeIcons = true;
+    return md;
 }
 function emptyDecorations() {
     return {
@@ -69,7 +81,8 @@ function emptyDecorations() {
         latestText: [],
         patchText: [],
         minorText: [],
-        majorText: []
+        majorText: [],
+        greyText: []
     };
 }
 class VersionCodeLensProvider {
@@ -124,6 +137,7 @@ class VersionCodeLensProvider {
         this.patchTextDeco = this.createTextDecoration(LEVEL_COLORS.patch);
         this.minorTextDeco = this.createTextDecoration(LEVEL_COLORS.minor);
         this.majorTextDeco = this.createTextDecoration(LEVEL_COLORS.major);
+        this.greyTextDeco = this.createTextDecoration(LEVEL_COLORS.grey);
         this.editorListener = vscode.window.onDidChangeActiveTextEditor((editor) => {
             if (editor) {
                 this.reapplyDecorations(editor);
@@ -157,6 +171,7 @@ class VersionCodeLensProvider {
         editor.setDecorations(this.patchTextDeco, decos.patchText);
         editor.setDecorations(this.minorTextDeco, decos.minorText);
         editor.setDecorations(this.majorTextDeco, decos.majorText);
+        editor.setDecorations(this.greyTextDeco, decos.greyText);
     }
     clearEditorDecorations(editor) {
         this.setEditorDecorations(editor, emptyDecorations());
@@ -208,6 +223,7 @@ class VersionCodeLensProvider {
         this.patchTextDeco.dispose();
         this.minorTextDeco.dispose();
         this.majorTextDeco.dispose();
+        this.greyTextDeco.dispose();
         this.documentStates.clear();
         this.changedLines.clear();
         this.forceFullRefresh.clear();
@@ -292,11 +308,8 @@ class VersionCodeLensProvider {
                 info.updateAvailable = false;
                 const decoLine = new vscode.Range(line, 0, line, Number.MAX_SAFE_INTEGER);
                 decos.grey.push(decoLine);
-                lenses.push(new vscode.CodeLens(info.range, {
-                    title: `⚠ Version not found for ${info.name}`,
-                    command: "versionCheck.updateDependency",
-                    arguments: [document.uri, provider.id, info, undefined]
-                }));
+                const nfEnd = document.lineAt(line).range.end;
+                decos.greyText.push(buildTextDecoration(new vscode.Range(nfEnd, nfEnd), `⚠ Version not found`));
                 continue;
             }
             if (!resolved.latestVersion) {
@@ -310,20 +323,17 @@ class VersionCodeLensProvider {
             const lineEnd = document.lineAt(line).range.end;
             const textRange = new vscode.Range(lineEnd, lineEnd);
             if (!updateAvailable) {
+                // Up-to-date: status is shown by the inline colored annotation only.
+                // No CodeLens (would just repeat the info on the line above).
                 decos.green.push(decoRange);
-                decos.latestText.push(buildTextDecoration(textRange, `Up to date (${resolved.latestVersion})`));
-                lenses.push(new vscode.CodeLens(info.range, {
-                    title: `✓ Latest (${resolved.latestVersion})`,
-                    command: "versionCheck.updateDependency",
-                    arguments: [document.uri, provider.id, info, resolved.latestVersion]
-                }));
+                decos.latestText.push(buildTextDecoration(textRange, `✓ Up to date (${resolved.latestVersion})`));
                 continue;
             }
             info.latestVersion = resolved.latestVersion;
             info.updateAvailable = true;
             const diffLevel = (0, semver_1.getVersionDiffLevel)(info.currentVersion, resolved.latestVersion);
             const levelLabel = UPDATE_LEVEL_LABELS[diffLevel];
-            const annotation = buildTextDecoration(textRange, `Update to ${resolved.latestVersion} — ${levelLabel}`);
+            const annotation = buildTextDecoration(textRange, `↑ Update to ${resolved.latestVersion} — ${levelLabel}`, buildUpdateHover(document.uri, provider.id, info, resolved.latestVersion));
             if (diffLevel === "major") {
                 decos.red.push(decoRange);
                 decos.majorText.push(annotation);
@@ -345,11 +355,11 @@ class VersionCodeLensProvider {
             if (info.range.start.line < sectionData.firstLine) {
                 sectionData.firstLine = info.range.start.line;
             }
-            lenses.push(new vscode.CodeLens(info.range, {
-                title: `Choose version (latest ${resolved.latestVersion})`,
-                command: "versionCheck.updateDependency",
-                arguments: [document.uri, provider.id, info, resolved.latestVersion]
-            }));
+            // No per-package CodeLens: the inline colored annotation at the end of
+            // the line already shows the version + level, and single-package updates
+            // are available via the Quick Fix lightbulb (Cmd+.). This keeps each
+            // dependency on a single line. A section-level "Update all" lens is still
+            // added below.
         }
         // Clean up stale entries from state (packages that no longer exist)
         const currentLines = new Set(packages.map(p => p.range.start.line));
